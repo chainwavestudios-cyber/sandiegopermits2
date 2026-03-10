@@ -21,10 +21,59 @@ const crawler = new PlaywrightCrawler({
       { waitUntil: 'networkidle' }
     );
 
-    // Click PDS tab
-    await page.click('a:has-text("PDS")');
+    // Screenshot to see what's on the page
+    await Actor.setValue('homepage', await page.screenshot({ fullPage: true }), { 
+      contentType: 'image/png' 
+    });
+
+    // Log all links so we can find the right PDS selector
+    const links = await page.$$eval('a', els =>
+      els.map(el => ({ 
+        text: el.innerText.trim(), 
+        id: el.id, 
+        href: el.href,
+        class: el.className 
+      })).filter(l => l.text.length > 0)
+    );
+    log.info('Links found on page: ' + JSON.stringify(links));
+
+    // Try multiple selectors for PDS tab
+    const pdsSelectors = [
+      'a:has-text("PDS")',
+      'a[href*="PDS"]',
+      'a[id*="PDS"]',
+      'a[title*="PDS"]',
+      'li:has-text("PDS") a',
+      'td:has-text("PDS") a',
+    ];
+
+    let clicked = false;
+    for (const selector of pdsSelectors) {
+      try {
+        const el = await page.$(selector);
+        if (el) {
+          log.info(`Found PDS using selector: ${selector}`);
+          await el.click();
+          clicked = true;
+          break;
+        }
+      } catch (e) {
+        log.info(`Selector failed: ${selector}`);
+      }
+    }
+
+    if (!clicked) {
+      log.error('Could not find PDS link with any selector. Check homepage screenshot in key-value store.');
+      return;
+    }
+
     await page.waitForLoadState('networkidle');
     log.info('On PDS page');
+
+    // Screenshot after clicking PDS
+    await Actor.setValue('pds_page', await page.screenshot({ fullPage: true }), { 
+      contentType: 'image/png' 
+    });
 
     // Fill date range
     await page.fill('input[id*="txtSearchStartDate"]', startDate);
@@ -36,6 +85,11 @@ const crawler = new PlaywrightCrawler({
     await page.click('img[alt="Expand"]');
     log.info('Waiting 10s for additional criteria to load...');
     await page.waitForTimeout(10000);
+
+    // Screenshot after expanding criteria
+    await Actor.setValue('criteria_expanded', await page.screenshot({ fullPage: true }), { 
+      contentType: 'image/png' 
+    });
 
     // Select solar scope code
     await page.selectOption(
@@ -49,6 +103,11 @@ const crawler = new PlaywrightCrawler({
     await page.click('a[id*="btnSearch"]');
     await page.waitForSelector('tr.gdvPermitList_Row', { timeout: 60000 });
     log.info('Search results loaded');
+
+    // Screenshot of results
+    await Actor.setValue('results_page', await page.screenshot({ fullPage: true }), { 
+      contentType: 'image/png' 
+    });
 
     // Scrape results table
     const leads = await page.$$eval('tr.gdvPermitList_Row', rows => {
@@ -81,7 +140,6 @@ const crawler = new PlaywrightCrawler({
         const fullUrl = new URL(href, page.url()).href;
         await detailPage.goto(fullUrl, { waitUntil: 'networkidle' });
 
-        // Navigate to application info
         await detailPage.click('a:has-text("More Details")');
         await detailPage.waitForTimeout(2000);
         await detailPage.click('a:has-text("Application Information")');
@@ -108,7 +166,7 @@ const crawler = new PlaywrightCrawler({
 
       } catch (err) {
         log.error(`Failed detail for ${lead.recordId}: ${err.message}`);
-        results.push(lead); // save partial data, don't lose the record
+        results.push(lead);
       } finally {
         await detailPage.close();
       }
